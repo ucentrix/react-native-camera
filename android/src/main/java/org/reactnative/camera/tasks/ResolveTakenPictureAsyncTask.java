@@ -155,7 +155,7 @@ public class ResolveTakenPictureAsyncTask extends AsyncTask<Void, Void, Writable
             WritableMap fileExifData = null;
 
             if (inputStream != null) {
-                ExifInterface exifInterface = new ExifInterface(inputStream);
+                exifInterface = new ExifInterface(inputStream);
                 // Get orientation of the image from mImageData via inputStream
                 int orientation = exifInterface.getAttributeInt(ExifInterface.TAG_ORIENTATION,
                         ExifInterface.ORIENTATION_UNDEFINED);
@@ -176,8 +176,8 @@ public class ResolveTakenPictureAsyncTask extends AsyncTask<Void, Void, Writable
                     mBitmap = flipHorizontally(mBitmap);
                 }
 
-                WritableMap exifData = null;
-                ReadableMap exifExtraData = null;
+                exifData = null;
+                exifExtraData = null;
                 boolean writeExifToResponse = mOptions.hasKey("exif") && mOptions.getBoolean("exif");
                 boolean writeExifToFile = false;
                 if (mOptions.hasKey("writeExif")) {
