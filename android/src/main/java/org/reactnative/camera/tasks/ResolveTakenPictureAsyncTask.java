@@ -80,91 +80,95 @@ public class ResolveTakenPictureAsyncTask extends AsyncTask<Void, Void, Writable
         response.putInt("pictureOrientation", mOptions.hasKey("orientation") ? mOptions.getInt("orientation") : mDeviceOrientation);
 
         try{
+
             // this replaces the skipProcessing flag, we will process only if needed, and in
             // an orderly manner, so that skipProcessing is the default behaviour if no options are given
             // and this behaves more like the iOS version.
             // We will load all data lazily only when needed.
+            
+            if (mBitmap == null) {
+                // this should not incurr in any overhead if not read/used
+                inputStream = new ByteArrayInputStream(mImageData);
+            }
 
-            // this should not incurr in any overhead if not read/used
-            inputStream = new ByteArrayInputStream(mImageData);
+            if (inputStream != null){
+                // Rotate the bitmap to the proper orientation if requested
+                if (mOptions.hasKey("fixOrientation") && mOptions.getBoolean("fixOrientation")){
 
-            // Rotate the bitmap to the proper orientation if requested
-            if(mOptions.hasKey("fixOrientation") && mOptions.getBoolean("fixOrientation")){
+                    exifInterface = new ExifInterface(inputStream);
 
-                exifInterface = new ExifInterface(inputStream);
+                    // Get orientation of the image from mImageData via inputStream
+                    int orientation = exifInterface.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
 
-                // Get orientation of the image from mImageData via inputStream
-                int orientation = exifInterface.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
+                    if(orientation != ExifInterface.ORIENTATION_UNDEFINED){
+                        loadBitmap();
+                        mBitmap = rotateBitmap(mBitmap, getImageRotation(orientation));
+                        orientationChanged = true;
+                    }
+                }
 
-                if(orientation != ExifInterface.ORIENTATION_UNDEFINED){
+                if (mOptions.hasKey("width")) {
                     loadBitmap();
-                    mBitmap = rotateBitmap(mBitmap, getImageRotation(orientation));
-                    orientationChanged = true;
+                    mBitmap = resizeBitmap(mBitmap, mOptions.getInt("width"));
                 }
-            }
 
-            if (mOptions.hasKey("width")) {
-                loadBitmap();
-                mBitmap = resizeBitmap(mBitmap, mOptions.getInt("width"));
-            }
-
-            if (mOptions.hasKey("mirrorImage") && mOptions.getBoolean("mirrorImage")) {
-                loadBitmap();
-                mBitmap = flipHorizontally(mBitmap);
-            }
-
-
-            // EXIF code - we will adjust exif info later if we manipulated the bitmap
-            boolean writeExifToResponse = mOptions.hasKey("exif") && mOptions.getBoolean("exif");
-
-            // default to true if not provided so it is consistent with iOS and with what happens if no
-            // processing is done and the image is saved as is.
-            boolean writeExifToFile = true;
-
-            if (mOptions.hasKey("writeExif")) {
-                switch (mOptions.getType("writeExif")) {
-                    case Boolean:
-                        writeExifToFile = mOptions.getBoolean("writeExif");
-                        break;
-                    case Map:
-                        exifExtraData = mOptions.getMap("writeExif");
-                        writeExifToFile = true;
-                        break;
+                if (mOptions.hasKey("mirrorImage") && mOptions.getBoolean("mirrorImage")) {
+                    loadBitmap();
+                    mBitmap = flipHorizontally(mBitmap);
                 }
-            }
 
-            // Read Exif data if needed
-            if (writeExifToResponse || writeExifToFile) {
+                // EXIF code - we will adjust exif info later if we manipulated the bitmap
+                boolean writeExifToResponse = mOptions.hasKey("exif") && mOptions.getBoolean("exif");
 
-                // if we manipulated the image, or need to add extra data, or need to add it to the response,
-                // then we need to load the actual exif data.
-                // Otherwise we can just use w/e exif data we have right now in our byte array
-                if(mBitmap != null || exifExtraData != null || writeExifToResponse){
-                    if(exifInterface == null){
-                        exifInterface = new ExifInterface(inputStream);
-                    }
-                    exifData = RNCameraViewHelper.getExifData(exifInterface);
+                // default to true if not provided so it is consistent with iOS and with what happens if no
+                // processing is done and the image is saved as is.
+                boolean writeExifToFile = true;
 
-                    if(exifExtraData != null){
-                        exifData.merge(exifExtraData);
+                if (mOptions.hasKey("writeExif")) {
+                    switch (mOptions.getType("writeExif")) {
+                        case Boolean:
+                            writeExifToFile = mOptions.getBoolean("writeExif");
+                            break;
+                        case Map:
+                            exifExtraData = mOptions.getMap("writeExif");
+                            writeExifToFile = true;
+                            break;
                     }
                 }
 
-                // if we did anything to the bitmap, adjust exif
-                if(mBitmap != null){
-                    exifData.putInt("width", mBitmap.getWidth());
-                    exifData.putInt("height", mBitmap.getHeight());
+                // Read Exif data if needed
+                if (writeExifToResponse || writeExifToFile) {
 
-                    if(orientationChanged){
-                        exifData.putInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                    // if we manipulated the image, or need to add extra data, or need to add it to the response,
+                    // then we need to load the actual exif data.
+                    // Otherwise we can just use w/e exif data we have right now in our byte array
+                    if(mBitmap != null || exifExtraData != null || writeExifToResponse){
+                        if(exifInterface == null){
+                            exifInterface = new ExifInterface(inputStream);
+                        }
+                        exifData = RNCameraViewHelper.getExifData(exifInterface);
+
+                        if(exifExtraData != null){
+                            exifData.merge(exifExtraData);
+                        }
                     }
-                }
 
-                // Write Exif data to the response if requested
-                if (writeExifToResponse) {
-                    final WritableMap exifDataCopy = Arguments.createMap();
-                    exifDataCopy.merge(exifData);
-                    response.putMap("exif", exifDataCopy);
+                    // if we did anything to the bitmap, adjust exif
+                    if(mBitmap != null){
+                        exifData.putInt("width", mBitmap.getWidth());
+                        exifData.putInt("height", mBitmap.getHeight());
+
+                        if(orientationChanged){
+                            exifData.putInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                        }
+                    }
+
+                    // Write Exif data to the response if requested
+                    if (writeExifToResponse) {
+                        final WritableMap exifDataCopy = Arguments.createMap();
+                        exifDataCopy.merge(exifData);
+                        response.putMap("exif", exifDataCopy);
+                    }
                 }
             }
 
