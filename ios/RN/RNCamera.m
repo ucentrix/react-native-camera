@@ -9,6 +9,7 @@
 #import <MobileCoreServices/MobileCoreServices.h>
 #import "RNSensorOrientationChecker.h"
 #import "RNCustomWhiteBalanceSettings.h"
+#import <AudioToolbox/AudioToolbox.h>
 
 @interface RNCamera ()
 
@@ -48,6 +49,11 @@
 @end
 
 @implementation RNCamera
+{
+    NSDictionary *_scanItemOptions;
+    RCTPromiseResolveBlock _scanItemResolve;
+    RCTPromiseRejectBlock _scanItemReject;
+}
 
 static NSDictionary *defaultFaceDetectorOptions = nil;
 
@@ -86,6 +92,7 @@ BOOL _sessionInterrupted = NO;
         self.exposure = -1;
         self.presetCamera = AVCaptureDevicePositionUnspecified;
         self.cameraId = @"";
+        _cameraScanMode = @"none";
         self.isFocusedOnPoint = NO;
         self.isExposedOnPoint = NO;
         self.invertImageData = true;
@@ -738,6 +745,38 @@ BOOL _sessionInterrupted = NO;
     }];
 }
 
+- (BOOL)checkVideoOrientation
+{
+    if (_videoDataOutput) {
+        AVCaptureConnection *connection = [_videoDataOutput connectionWithMediaType:AVMediaTypeVideo];
+        if ([connection isVideoOrientationSupported]) {
+            UIDeviceOrientation deviceOrientation = [[UIDevice currentDevice] orientation];
+            AVCaptureVideoOrientation orientation = [RNCameraUtils videoOrientationForDeviceOrientation:deviceOrientation];
+
+            AVCaptureVideoOrientation currentOrientation = [connection videoOrientation];
+            if (orientation != currentOrientation) {
+                [connection setVideoOrientation:orientation];
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
+- (void)prepareCaptureFromPreview:(NSDictionary *)options resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
+    dispatch_async(self.sessionQueue, ^{
+        if (resolve != _scanItemResolve) {
+            if (_scanItemReject) {
+                _scanItemReject(@"-1", @"Already capturing", nil);
+            }
+            _scanItemOptions = options;
+            _scanItemResolve = resolve;
+            _scanItemReject = reject;
+        }
+    });
+}
+
 - (void)takePicture:(NSDictionary *)options resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
 {
     // if video device is not set, reject
@@ -751,6 +790,12 @@ BOOL _sessionInterrupted = NO;
         return;
     }
 
+    if (![_cameraScanMode isEqualToString:@"none"]) {
+        [self prepareCaptureFromPreview:options resolve:resolve reject:reject];
+        AudioServicesPlaySystemSound(1108);
+        return;
+    }
+
     NSInteger orientation = [options[@"orientation"] integerValue];
 
     AVCaptureConnection *connection = [self.stillImageOutput connectionWithMediaType:AVMediaTypeVideo];
@@ -758,7 +803,6 @@ BOOL _sessionInterrupted = NO;
     @try {
         [self.stillImageOutput captureStillImageAsynchronouslyFromConnection:connection completionHandler: ^(CMSampleBufferRef imageSampleBuffer, NSError *error) {
             if (imageSampleBuffer && !error) {
-
                 if ([options[@"pauseAfterCapture"] boolValue]) {
                     [[self.previewLayer connection] setEnabled:NO];
                 }
@@ -791,187 +835,11 @@ BOOL _sessionInterrupted = NO;
                 CGRect croppedSize = AVMakeRectWithAspectRatioInsideRect(previewSize, cropRect);
                 takenImage = [RNImageUtils cropImage:takenImage toRect:croppedSize];
 
-                // apply other image settings
-                bool resetOrientation = NO;
-                if ([options[@"mirrorImage"] boolValue]) {
-                    takenImage = [RNImageUtils mirrorImage:takenImage];
-                }
-                if ([options[@"forceUpOrientation"] boolValue]) {
-                    takenImage = [RNImageUtils forceUpOrientation:takenImage];
-                    resetOrientation = YES;
-                }
-                if ([options[@"width"] integerValue]) {
-                    takenImage = [RNImageUtils scaleImage:takenImage toWidth:[options[@"width"] integerValue]];
-                    resetOrientation = YES;
-                }
-
-                // get image metadata so we can re-add it later
-                // make it mutable since we need to adjust quality/compression
-                CFDictionaryRef metaDict = CMCopyDictionaryOfAttachments(NULL, imageSampleBuffer, kCMAttachmentMode_ShouldPropagate);
-
-                CFMutableDictionaryRef mutableMetaDict = CFDictionaryCreateMutableCopy(NULL, 0, metaDict);
-
-                // release the meta dict now that we've copied it
-                // to Objective-C land
-                CFRelease(metaDict);
-
-                // bridge the copy for auto release
-                NSMutableDictionary *metadata = (NSMutableDictionary *)CFBridgingRelease(mutableMetaDict);
-
-                RNCameraImageType imageType = RNCameraImageTypeJPEG;
-                CFStringRef imageTypeIdentifier = kUTTypeJPEG;
-                NSString *imageExtension = @".jpg";
-                if ([options[@"imageType"] isEqualToString:@"png"]) {
-                    imageType = RNCameraImageTypePNG;
-                    imageTypeIdentifier = kUTTypePNG;
-                    imageExtension = @".png";
-                }
-
-                // Get final JPEG image and set compression
-                NSString *qualityKey = (__bridge NSString *)kCGImageDestinationLossyCompressionQuality;
-                if (imageType == RNCameraImageTypeJPEG) {
-                    float quality = [options[@"quality"] floatValue];
-                    [metadata setObject:@(quality) forKey:qualityKey];
-                }
-
-
-                // Reset exif orientation if we need to due to image changes
-                // that already rotate the image.
-                // Other dimension attributes will be set automatically
-                // regardless of what we have on our metadata dict
-                if (resetOrientation){
-                    metadata[(NSString*)kCGImagePropertyOrientation] = @(1);
-                }
-
-
-                // get our final image data with added metadata
-                // idea taken from: https://stackoverflow.com/questions/9006759/how-to-write-exif-metadata-to-an-image-not-the-camera-roll-just-a-uiimage-or-j/9091472
-                NSMutableData * destData = [NSMutableData data];
-
-                CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)destData, imageTypeIdentifier, 1, NULL);
-
-                // defaults to true, must like Android
-                bool writeExif = true;
-
-                if(options[@"writeExif"]){
-
-                    // if we received an object, merge with our meta
-                    if ([options[@"writeExif"] isKindOfClass:[NSDictionary class]]){
-                        NSDictionary *newExif = options[@"writeExif"];
-
-                        // need to update both, since apple splits data
-                        // across exif and tiff dicts. No problems with duplicates
-                        // they will be handled appropiately.
-                        NSMutableDictionary *exif = metadata[(NSString*)kCGImagePropertyExifDictionary];
-
-                        NSMutableDictionary *tiff = metadata[(NSString*)kCGImagePropertyTIFFDictionary];
-
-
-                        // initialize exif dict if not built
-                        if(!exif){
-                            exif = [[NSMutableDictionary alloc] init];
-                            metadata[(NSString*)kCGImagePropertyExifDictionary] = exif;
-                        }
-
-                        if(!tiff){
-                            tiff = [[NSMutableDictionary alloc] init];
-                            metadata[(NSString*)kCGImagePropertyTIFFDictionary] = exif;
-                        }
-
-                        // merge new exif info
-                        [exif addEntriesFromDictionary:newExif];
-                        [tiff addEntriesFromDictionary:newExif];
-
-
-                        // correct any GPS metadata like Android does
-                        // need to get the right format for each value.
-                        NSMutableDictionary *gpsDict = [[NSMutableDictionary alloc] init];
-
-                        if(newExif[@"GPSLatitude"]){
-                            gpsDict[(NSString *)kCGImagePropertyGPSLatitude] = @(fabs([newExif[@"GPSLatitude"] floatValue]));
-
-                            gpsDict[(NSString *)kCGImagePropertyGPSLatitudeRef] = [newExif[@"GPSLatitude"] floatValue] >= 0 ? @"N" : @"S";
-
-                        }
-                        if(newExif[@"GPSLongitude"]){
-                            gpsDict[(NSString *)kCGImagePropertyGPSLongitude] = @(fabs([newExif[@"GPSLongitude"] floatValue]));
-
-                            gpsDict[(NSString *)kCGImagePropertyGPSLongitudeRef] = [newExif[@"GPSLongitude"] floatValue] >= 0 ? @"E" : @"W";
-                        }
-                        if(newExif[@"GPSAltitude"]){
-                            gpsDict[(NSString *)kCGImagePropertyGPSAltitude] = @(fabs([newExif[@"GPSAltitude"] floatValue]));
-
-                            gpsDict[(NSString *)kCGImagePropertyGPSAltitudeRef] = [newExif[@"GPSAltitude"] floatValue] >= 0 ? @(0) : @(1);
-                        }
-
-                        // if we don't have gps info, add it
-                        // otherwise, merge it
-                        if(!metadata[(NSString *)kCGImagePropertyGPSDictionary]){
-                            metadata[(NSString *)kCGImagePropertyGPSDictionary] = gpsDict;
-                        }
-                        else{
-                            [metadata[(NSString *)kCGImagePropertyGPSDictionary] addEntriesFromDictionary:gpsDict];
-                        }
-
-                    }
-                    else{
-                        writeExif = [options[@"writeExif"] boolValue];
-                    }
-
-                }
-
-                CFDictionaryRef finalMetaData = nil;
-                if (writeExif) {
-                    finalMetaData = (__bridge CFDictionaryRef)metadata;
-                } else if (metadata[qualityKey]) {
-                    // In order to apply the desired compression quality,
-                    // it is necessary to specify the kCGImageDestinationLossyCompressionQuality in the metadata.
-                    finalMetaData = (__bridge CFDictionaryRef)@{qualityKey: metadata[qualityKey]};
-                }
-
-                CGImageDestinationAddImage(destination, takenImage.CGImage, finalMetaData);
-
-
-                // write final image data with metadata to our destination
-                if (CGImageDestinationFinalize(destination)){
-
-                    NSMutableDictionary *response = [[NSMutableDictionary alloc] init];
-
-                    NSString *path = nil;
-                    if (options[@"path"]) {
-                        path = options[@"path"];
-                    }
-                    else{
-                        path = [RNFileSystem generatePathInDirectory:[[RNFileSystem cacheDirectoryPath] stringByAppendingPathComponent:@"Camera"] withExtension:imageExtension];
-                    }
-
-                    if (![options[@"doNotSave"] boolValue]) {
-                        response[@"uri"] = [RNImageUtils writeImage:destData toPath:path];
-                    }
-                    response[@"width"] = @(takenImage.size.width);
-                    response[@"height"] = @(takenImage.size.height);
-
-                    if ([options[@"base64"] boolValue]) {
-                        response[@"base64"] = [destData base64EncodedStringWithOptions:0];
-                    }
-
-                    if ([options[@"exif"] boolValue]) {
-                        response[@"exif"] = metadata;
-
-                        // No longer needed since we always get the photo metadata now
-                        //[RNImageUtils updatePhotoMetadata:imageSampleBuffer withAdditionalData:@{ @"Orientation": @(imageRotation) } inResponse:response]; // TODO
-                    }
-
-                    response[@"pictureOrientation"] = @([self.orientation integerValue]);
-                    response[@"deviceOrientation"] = @([self.deviceOrientation integerValue]);
-                    self.orientation = nil;
-                    self.deviceOrientation = nil;
-
-                    if (useFastMode) {
-                        [self onPictureSaved:@{@"data": response, @"id": options[@"id"]}];
-                    } else {
-                        resolve(response);
-                    }
+               [self handlePicture:takenImage
+                       sampleBuffer:imageSampleBuffer
+                            options:options
+                        useFastMode:useFastMode
+                            resolve:resolve];
                 }
                 else{
                     reject(@"E_IMAGE_CAPTURE_FAILED", @"Image could not be saved", error);
@@ -995,6 +863,73 @@ BOOL _sessionInterrupted = NO;
                @"Got exception while taking picture",
                [NSError errorWithDomain:@"E_IMAGE_CAPTURE_FAILED" code: 500 userInfo:@{NSLocalizedDescriptionKey:exception.reason}]
         );
+    }
+}
+
+- (void)handlePicture:(UIImage *)takenImage
+         sampleBuffer:(CMSampleBufferRef)imageSampleBuffer
+              options:(NSDictionary *)options
+          useFastMode:(BOOL)useFastMode
+              resolve:(RCTPromiseResolveBlock)resolve
+
+{
+    if ([options[@"mirrorImage"] boolValue]) {
+        takenImage = [RNImageUtils mirrorImage:takenImage];
+    }
+    if ([options[@"forceUpOrientation"] boolValue]) {
+        takenImage = [RNImageUtils forceUpOrientation:takenImage];
+    }
+
+    if ([options[@"width"] integerValue]) {
+        takenImage = [RNImageUtils scaleImage:takenImage toWidth:[options[@"width"] integerValue]];
+    }
+
+    NSMutableDictionary *response = [[NSMutableDictionary alloc] init];
+    float quality = [options[@"quality"] floatValue];
+    NSData *takenImageData = UIImageJPEGRepresentation(takenImage, quality);
+    NSString *path = [RNFileSystem generatePathInDirectory:[[RNFileSystem cacheDirectoryPath] stringByAppendingPathComponent:@"Camera"] withExtension:@".jpg"];
+    if (![options[@"doNotSave"] boolValue]) {
+        response[@"uri"] = [RNImageUtils writeImage:takenImageData toPath:path];
+    }
+    response[@"width"] = @(takenImage.size.width);
+    response[@"height"] = @(takenImage.size.height);
+
+    if ([options[@"base64"] boolValue]) {
+        response[@"base64"] = [takenImageData base64EncodedStringWithOptions:0];
+    }
+
+    if ([options[@"exif"] boolValue]) {
+        int imageRotation;
+        switch (takenImage.imageOrientation) {
+            case UIImageOrientationLeft:
+            case UIImageOrientationRightMirrored:
+                imageRotation = 90;
+                break;
+            case UIImageOrientationRight:
+            case UIImageOrientationLeftMirrored:
+                imageRotation = -90;
+                break;
+            case UIImageOrientationDown:
+            case UIImageOrientationDownMirrored:
+                imageRotation = 180;
+                break;
+            case UIImageOrientationUpMirrored:
+            default:
+                imageRotation = 0;
+                break;
+        }
+        [RNImageUtils updatePhotoMetadata:imageSampleBuffer withAdditionalData:@{ @"Orientation": @(imageRotation) } inResponse:response]; // TODO
+    }
+
+    response[@"pictureOrientation"] = @([self.orientation integerValue]);
+    response[@"deviceOrientation"] = @([self.deviceOrientation integerValue]);
+    self.orientation = nil;
+    self.deviceOrientation = nil;
+
+    if (useFastMode) {
+        [self onPictureSaved:@{@"data": response, @"id": options[@"id"]}];
+    } else {
+        resolve(response);
     }
 }
 
@@ -1316,7 +1251,7 @@ BOOL _sessionInterrupted = NO;
         // (see comment in -record), we go ahead and add the AVCaptureMovieFileOutput
         // to avoid an exposure rack on some devices that can cause the first few
         // frames of the recorded output to be underexposed.
-        if (![self.faceDetector isRealDetector] && ![self.textDetector isRealDetector] && ![self.barcodeDetector isRealDetector]) {
+        if (![self.faceDetector isRealDetector] && ![self.textDetector isRealDetector] && ![self.barcodeDetector isRealDetector] && [_cameraScanMode isEqualToString:@"none"]) {
             [self setupMovieFileCapture];
         }
         [self setupOrDisableBarcodeScanner];
@@ -2186,14 +2121,86 @@ BOOL _sessionInterrupted = NO;
     self.videoDataOutput = nil;
 }
 
+# pragma mark - Scan Mode
+
+- (void)setCameraScanMode:(NSString *)cameraScanMode
+{
+    NSString *scanMode;
+    if ([cameraScanMode isEqualToString:@"fast"]) {
+        scanMode = @"fast";
+    } else {
+        scanMode = @"none";
+    }
+    if (![scanMode isEqualToString:_cameraScanMode]) {
+        _cameraScanMode = scanMode;
+        [self checkFrameCapture];
+    }
+}
+
+- (void)checkFrameCapture
+{
+    if (_cameraScanMode && ![_cameraScanMode isEqualToString:@"none"]) {
+        if (!self.videoDataOutput) {
+            self.videoDataOutput = [[AVCaptureVideoDataOutput alloc] init];
+            if (![self.session canAddOutput:_videoDataOutput]) {
+                NSLog(@"Failed to setup video data output");
+                self.cameraScanMode = @"none";
+                return;
+            }
+            NSDictionary *rgbOutputSettings = [NSDictionary
+                dictionaryWithObject:[NSNumber numberWithInt:kCMPixelFormat_32BGRA]
+                                forKey:(id)kCVPixelBufferPixelFormatTypeKey];
+            [self checkVideoOrientation];
+            [self.videoDataOutput setVideoSettings:rgbOutputSettings];
+            [self.videoDataOutput setAlwaysDiscardsLateVideoFrames:YES];
+            [self.videoDataOutput setSampleBufferDelegate:self queue:self.sessionQueue];
+            [self.session addOutput:_videoDataOutput];
+        }
+    }
+}
+
 # pragma mark - mlkit
 
 - (void)captureOutput:(AVCaptureOutput *)captureOutput
     didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
            fromConnection:(AVCaptureConnection *)connection
 {
-    if (![self.textDetector isRealDetector] && ![self.faceDetector isRealDetector] && ![self.barcodeDetector isRealDetector]) {
+    if ([self checkVideoOrientation]) {
+        return;
+    }
+
+    if (![self.textDetector isRealDetector] && ![self.faceDetector isRealDetector] && ![self.barcodeDetector isRealDetector] && [_cameraScanMode isEqualToString:@"none"]) {
         NSLog(@"failing real check");
+        return;
+    }
+
+    if (_scanItemResolve) {
+        RCTPromiseResolveBlock resolve = _scanItemResolve;
+        RCTPromiseRejectBlock reject = _scanItemReject;
+        NSDictionary *options = _scanItemOptions;
+
+        _scanItemResolve = nil;
+        _scanItemReject = nil;
+        _scanItemOptions = nil;
+
+        CVImageBufferRef buffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+        CIImage *ciImage = [CIImage imageWithCVImageBuffer:buffer];
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            CIContext *context = [CIContext new];
+            CGImageRef cgImage = [context createCGImage:ciImage fromRect:ciImage.extent];
+            UIImage *image = [UIImage imageWithCGImage:cgImage];
+            CGImageRelease(cgImage);
+            if (image) {
+                BOOL useFastMode = [options valueForKey:@"fastMode"] != nil && [options[@"fastMode"] boolValue];
+                [self handlePicture:image
+                       sampleBuffer:sampleBuffer
+                            options:options
+                        useFastMode:useFastMode
+                            resolve:resolve];
+            } else {
+                reject(@"-1", @"Could not process camera output", nil);
+            }
+        });
         return;
     }
 

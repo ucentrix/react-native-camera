@@ -134,6 +134,11 @@ public class CameraViewManager extends ViewGroupManager<RNCameraView> {
   public void setPictureSize(RNCameraView view, String size) {
     view.setPictureSize(size.equals("None") ? null : Size.parse(size));
   }
+  
+  @ReactProp(name = "camera1ScanMode")
+  public void setCamera1ScanMode(RNCameraView view, String camera1ScanMode) {
+    view.setCamera1ScanMode(camera1ScanMode);
+  }
 
   @ReactProp(name = "playSoundOnCapture")
   public void setPlaySoundOnCapture(RNCameraView view, boolean playSoundOnCapture) {
