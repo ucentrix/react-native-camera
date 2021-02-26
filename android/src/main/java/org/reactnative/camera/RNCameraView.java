@@ -393,9 +393,9 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
     mBgHandler.post(new Runnable() {
       @Override
       public void run() {
-        boolean takePicture = useTakePicture();
+        boolean takePictureB = useTakePicture();
 
-        if (!takePicture && mCamera1ScanMode.equals(CAMERA1SCANSUPERFAST) && mRotated != null) {
+        if (!takePictureB && mCamera1ScanMode.equals(CAMERA1SCANSUPERFAST) && mRotated != null) {
           resolveTakenPicture(mRotated, options, promise, cacheDirectory);
           storeRotated(null);
           return;
@@ -408,8 +408,8 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
         }
 
         try {
-          if (takePicture) {
-            super.takePicture(options);
+          if (takePictureB) {
+            takePicture(options);
           } else {
             checkScanning();
           }
