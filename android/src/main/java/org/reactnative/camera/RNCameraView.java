@@ -392,14 +392,6 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
   public void takePicture(ReadableMap options, final Promise promise, File cacheDirectory) {
     boolean takePicture = useTakePicture();
 
-    if (mPlaySoundOnCapture) {
-      AudioManager audioManager = (AudioManager)getContext().getSystemService(Context.AUDIO_SERVICE);
-      if (audioManager.getRingerMode() == AudioManager.RINGER_MODE_NORMAL) {
-        MediaActionSound sound = new MediaActionSound();
-        sound.play(MediaActionSound.SHUTTER_CLICK);
-      }
-    }
-
     if (!takePicture && mCamera1ScanMode.equals(CAMERA1SCANSUPERFAST) && mRotated != null) {
       resolveTakenPicture(mRotated, options, promise, cacheDirectory);
       storeRotated(null);
