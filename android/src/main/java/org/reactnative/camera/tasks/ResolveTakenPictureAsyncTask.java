@@ -91,6 +91,13 @@ public class ResolveTakenPictureAsyncTask extends AsyncTask<Void, Void, Writable
                 inputStream = new ByteArrayInputStream(mImageData);
             }
 
+            // EXIF code - we will adjust exif info later if we manipulated the bitmap
+            boolean writeExifToResponse = mOptions.hasKey("exif") && mOptions.getBoolean("exif");
+
+            // default to true if not provided so it is consistent with iOS and with what happens if no
+            // processing is done and the image is saved as is.
+            boolean writeExifToFile = true;
+
             if (inputStream != null){
                 // Rotate the bitmap to the proper orientation if requested
                 if (mOptions.hasKey("fixOrientation") && mOptions.getBoolean("fixOrientation")){
@@ -116,13 +123,6 @@ public class ResolveTakenPictureAsyncTask extends AsyncTask<Void, Void, Writable
                     loadBitmap();
                     mBitmap = flipHorizontally(mBitmap);
                 }
-
-                // EXIF code - we will adjust exif info later if we manipulated the bitmap
-                boolean writeExifToResponse = mOptions.hasKey("exif") && mOptions.getBoolean("exif");
-
-                // default to true if not provided so it is consistent with iOS and with what happens if no
-                // processing is done and the image is saved as is.
-                boolean writeExifToFile = true;
 
                 if (mOptions.hasKey("writeExif")) {
                     switch (mOptions.getType("writeExif")) {
@@ -185,7 +185,6 @@ public class ResolveTakenPictureAsyncTask extends AsyncTask<Void, Void, Writable
                     response.putInt("width", options.outWidth);
                     response.putInt("height", options.outHeight);
                 }
-
 
                 // save to file if requested
                 if (!mOptions.hasKey("doNotSave") || !mOptions.getBoolean("doNotSave")) {
