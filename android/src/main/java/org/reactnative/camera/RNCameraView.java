@@ -389,41 +389,42 @@ public class RNCameraView extends CameraView implements LifecycleEventListener, 
     }
   }
 
-  public void takePicture(final ReadableMap options, final Promise promise, final File cacheDirectory) {
-    mBgHandler.post(new Runnable() {
-      @Override
-      public void run() {
-        boolean takePictureB = useTakePicture();
+  public void takePicture(ReadableMap options, final Promise promise, File cacheDirectory) {
+    boolean takePicture = useTakePicture();
 
-        if (!takePictureB && mCamera1ScanMode.equals(CAMERA1SCANSUPERFAST) && mRotated != null) {
-          resolveTakenPicture(mRotated, options, promise, cacheDirectory);
-          storeRotated(null);
-          return;
-        }
-    
-        synchronized (COLLECTION_LOCK) {
-          mPictureTakenPromises.add(promise);
-          mPictureTakenOptions.put(promise, options);
-          mPictureTakenDirectories.put(promise, cacheDirectory);
-        }
-
-        try {
-          if (takePictureB) {
-            takePicture(options);
-          } else {
-            checkScanning();
-          }
-        } catch (Exception e) {
-          synchronized (COLLECTION_LOCK) {
-            mPictureTakenPromises.remove(promise);
-            mPictureTakenOptions.remove(promise);
-            mPictureTakenDirectories.remove(promise);
-          }
-
-          promise.reject("E_TAKE_PICTURE_FAILED", e.getMessage());
-        }
+    if (mPlaySoundOnCapture) {
+      AudioManager audioManager = (AudioManager)getContext().getSystemService(Context.AUDIO_SERVICE);
+      if (audioManager.getRingerMode() == AudioManager.RINGER_MODE_NORMAL) {
+        MediaActionSound sound = new MediaActionSound();
+        sound.play(MediaActionSound.SHUTTER_CLICK);
       }
-    });
+    }
+
+    if (!takePicture && mCamera1ScanMode.equals(CAMERA1SCANSUPERFAST) && mRotated != null) {
+      resolveTakenPicture(mRotated, options, promise, cacheDirectory);
+      storeRotated(null);
+      return;
+    }
+
+    synchronized (COLLECTION_LOCK) {
+      mPictureTakenPromises.add(promise);
+      mPictureTakenOptions.put(promise, options);
+      mPictureTakenDirectories.put(promise, cacheDirectory);
+    }
+    try {
+      if (takePicture) {
+        super.takePicture(options);
+      } else {
+        checkScanning();
+      }
+    } catch (Exception e) {
+      synchronized (COLLECTION_LOCK) {
+        mPictureTakenPromises.remove(promise);
+        mPictureTakenOptions.remove(promise);
+        mPictureTakenDirectories.remove(promise);
+      }
+      throw e;
+    }
   }
 
   @Override

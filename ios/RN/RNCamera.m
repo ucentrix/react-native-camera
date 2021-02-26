@@ -802,44 +802,44 @@ BOOL _sessionInterrupted = NO;
     [connection setVideoOrientation:orientation];
     @try {
         [self.stillImageOutput captureStillImageAsynchronouslyFromConnection:connection completionHandler: ^(CMSampleBufferRef imageSampleBuffer, NSError *error) {
-            if (imageSampleBuffer && !error) {
-                if ([options[@"pauseAfterCapture"] boolValue]) {
-                    [[self.previewLayer connection] setEnabled:NO];
-                }
+                if (imageSampleBuffer && !error) {
+                    if ([options[@"pauseAfterCapture"] boolValue]) {
+                        [[self.previewLayer connection] setEnabled:NO];
+                    }
 
-                BOOL useFastMode = [options valueForKey:@"fastMode"] != nil && [options[@"fastMode"] boolValue];
-                if (useFastMode) {
-                    resolve(nil);
-                }
+                    BOOL useFastMode = [options valueForKey:@"fastMode"] != nil && [options[@"fastMode"] boolValue];
+                    if (useFastMode) {
+                        resolve(nil);
+                    }
 
-                [self onPictureTaken:@{}];
-
-
-                // get JPEG image data
-                NSData *imageData = [AVCaptureStillImageOutput jpegStillImageNSDataRepresentation:imageSampleBuffer];
-                UIImage *takenImage = [UIImage imageWithData:imageData];
+                    [self onPictureTaken:@{}];
 
 
-                // Adjust/crop image based on preview dimensions
-                // TODO: This seems needed because iOS does not allow
-                // for aspect ratio settings, so this is the best we can get
-                // to mimic android's behaviour.
-                CGImageRef takenCGImage = takenImage.CGImage;
-                CGSize previewSize;
-                if (UIInterfaceOrientationIsPortrait([[UIApplication sharedApplication] statusBarOrientation])) {
-                    previewSize = CGSizeMake(self.previewLayer.frame.size.height, self.previewLayer.frame.size.width);
-                } else {
-                    previewSize = CGSizeMake(self.previewLayer.frame.size.width, self.previewLayer.frame.size.height);
-                }
-                CGRect cropRect = CGRectMake(0, 0, CGImageGetWidth(takenCGImage), CGImageGetHeight(takenCGImage));
-                CGRect croppedSize = AVMakeRectWithAspectRatioInsideRect(previewSize, cropRect);
-                takenImage = [RNImageUtils cropImage:takenImage toRect:croppedSize];
+                    // get JPEG image data
+                    NSData *imageData = [AVCaptureStillImageOutput jpegStillImageNSDataRepresentation:imageSampleBuffer];
+                    UIImage *takenImage = [UIImage imageWithData:imageData];
 
-               [self handlePicture:takenImage
-                       sampleBuffer:imageSampleBuffer
-                            options:options
-                        useFastMode:useFastMode
-                            resolve:resolve];
+
+                    // Adjust/crop image based on preview dimensions
+                    // TODO: This seems needed because iOS does not allow
+                    // for aspect ratio settings, so this is the best we can get
+                    // to mimic android's behaviour.
+                    CGImageRef takenCGImage = takenImage.CGImage;
+                    CGSize previewSize;
+                    if (UIInterfaceOrientationIsPortrait([[UIApplication sharedApplication] statusBarOrientation])) {
+                        previewSize = CGSizeMake(self.previewLayer.frame.size.height, self.previewLayer.frame.size.width);
+                    } else {
+                        previewSize = CGSizeMake(self.previewLayer.frame.size.width, self.previewLayer.frame.size.height);
+                    }
+                    CGRect cropRect = CGRectMake(0, 0, CGImageGetWidth(takenCGImage), CGImageGetHeight(takenCGImage));
+                    CGRect croppedSize = AVMakeRectWithAspectRatioInsideRect(previewSize, cropRect);
+                    takenImage = [RNImageUtils cropImage:takenImage toRect:croppedSize];
+
+                    [self handlePicture:takenImage
+                        sampleBuffer:imageSampleBuffer
+                                options:options
+                            useFastMode:useFastMode
+                                resolve:resolve];
                 }
                 else{
                     reject(@"E_IMAGE_CAPTURE_FAILED", @"Image could not be saved", error);
@@ -1257,6 +1257,9 @@ BOOL _sessionInterrupted = NO;
         [self setupOrDisableBarcodeScanner];
 
         _sessionInterrupted = NO;
+
+        // Manually restarting the session since it must
+        // have been stopped due to an error.
         [self.session startRunning];
         [self onReady:nil];
     });
@@ -2168,12 +2171,11 @@ BOOL _sessionInterrupted = NO;
     if ([self checkVideoOrientation]) {
         return;
     }
-
     if (![self.textDetector isRealDetector] && ![self.faceDetector isRealDetector] && ![self.barcodeDetector isRealDetector] && [_cameraScanMode isEqualToString:@"none"]) {
         NSLog(@"failing real check");
         return;
     }
-
+    
     if (_scanItemResolve) {
         RCTPromiseResolveBlock resolve = _scanItemResolve;
         RCTPromiseRejectBlock reject = _scanItemReject;
