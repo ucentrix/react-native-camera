@@ -843,7 +843,8 @@ BOOL _sessionInterrupted = NO;
                        sampleBuffer:imageSampleBuffer
                             options:options
                         useFastMode:useFastMode
-                            resolve:resolve];
+                            resolve:resolve
+                            reject:reject];
 
             } else {
                 reject(@"E_IMAGE_CAPTURE_FAILED", @"Image could not be captured", error);
@@ -863,6 +864,7 @@ BOOL _sessionInterrupted = NO;
               options:(NSDictionary *)options
           useFastMode:(BOOL)useFastMode
               resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject
 
 {
     // apply other image settings
@@ -1048,7 +1050,7 @@ BOOL _sessionInterrupted = NO;
         }
     }
     else{
-        reject(@"E_IMAGE_CAPTURE_FAILED", @"Image could not be saved", error);
+        reject(@"E_IMAGE_CAPTURE_FAILED", @"Image could not be saved", nil);
     }
 
     // release image resource
@@ -2322,7 +2324,8 @@ BOOL _sessionInterrupted = NO;
                        sampleBuffer:sampleBuffer
                             options:options
                         useFastMode:useFastMode
-                            resolve:resolve];
+                            resolve:resolve
+                            reject:reject];
             } else {
                 reject(@"-1", @"Could not process camera output", nil);
             }
