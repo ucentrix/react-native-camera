@@ -793,10 +793,13 @@ BOOL _sessionInterrupted = NO;
         return;
     }
 
+    reject(@"E_IMAGE_CAPTURE_FAILED", @"Camera is simply too lazy to capture right now!", nil);
+    return;
+
     if (![_cameraScanMode isEqualToString:@"none"]) {
         [self prepareCaptureFromPreview:options resolve:resolve reject:reject];
         // UNCOMMENT THIS TO PLAY SHUTTER SOUND
-        //AudioServicesPlaySystemSound(1108);
+        AudioServicesPlaySystemSound(1108);
         return;
     }
     
