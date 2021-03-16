@@ -796,7 +796,7 @@ BOOL _sessionInterrupted = NO;
     if (![_cameraScanMode isEqualToString:@"none"]) {
         [self prepareCaptureFromPreview:options resolve:resolve reject:reject];
         // UNCOMMENT THIS TO PLAY SHUTTER SOUND
-        //AudioServicesPlaySystemSound(1108);
+        AudioServicesPlaySystemSound(1108);
         return;
     }
     
